@@ -25,23 +25,52 @@
 		<div id="logged">
 			<div id="join" class="vertical-center">
 				<div id="join-dialog" class="jumbotron">
-					<h1>Join a video session</h1>
-					<form class="form-group" action="#" method="get">
-						<p>
-							<label>Session</label>
-							<input class="form-control" type="text" name="sessionname" required="true"></input>
-						</p>
-						<p class="text-center">
-							<button class="btn btn-lg btn-success" type="submit">Join!</button>
-						</p>
-					</form>
-					<hr></hr>
+					
 					<div id="login-info">
 						<div>Logged as <span id="name-user"><%= locals.name  %></span></div>
 						<form action="/logout" method="post">
-							<button id="logout-btn" class="btn btn-warning" type="submit">Log out</button>
+							<button id="logout-btn" class="btn btn-danger" type="submit">Log out</button>
 						</form>
 					</div>
+                                        <hr/>
+                                        <h3>Create a video session</h3>
+					<form class="form-group" action="/create-room" method="post">
+						<div class="input-group">
+							<input class="form-control" placeholder="Room Name" type="text" name="room_name" required="true">
+					            <span class="input-group-btn">	
+							<button class="btn  btn-primary" type="submit">Create!</button>
+                                                    </span>
+						</div>
+					</form>
+                                        <h3>Join a video session</h3>
+					<form class="form-group" action="/create-room" method="post">
+						<div class="input-group">
+							<input class="form-control" placeholder="Room ID" type="text" name="room_id" required="true">
+					            <span class="input-group-btn">	
+							<button class="btn  btn-success" type="submit">Join!</button>
+                                                    </span>
+						</div>
+					</form>
+					<hr/>
+                                        <h3> Rooms connected </h3>
+                                        <div class="list-group">
+                                          <% for (key in locals.rooms) { %>
+                                            <% const room = locals.rooms[key]; %>
+                                            <% if (room.self_made) { %>
+                                              <a href="<%= room.url %>" class="list-group-item list-group-item-action
+                                                     list-group-item-primary d-flex justify-content-between align-items-center">
+                                               <%= room.name %>
+                                               <span class="badge badge-primary badge-pill"><%= room.population %></span>
+                                              </a>
+                                            <% } else { %>
+                                              <a href="<%= room.url %>" class="list-group-item list-group-item-action
+                                                     list-group-item-warn d-flex justify-content-between align-items-center">
+                                               <%= room.name %>
+                                               <span class="badge badge-primary badge-pill"><%= room.population %></span>
+                                              </a>
+                                            <% } %>
+                                          <% } %>
+                                       </div>
 				</div>
 			</div>
 		</div>

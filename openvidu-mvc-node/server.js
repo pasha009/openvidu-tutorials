@@ -11,7 +11,7 @@ if (process.argv.length != 4) {
     process.exit(-1);
 }
 // For demo purposes we ignore self-signed certificate
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 // Node imports
 const express = require('express');
@@ -59,7 +59,7 @@ function addUser(name, pass, role) {
       pass: pass,
       role: role,
       logged: false,
-      rooms: []
+      rooms: {} 
    });
 }
 addUser("p1", "p1pass", OpenViduRole.PUBLISHER);
@@ -157,9 +157,7 @@ function loginUser(req, res) {
   if (login(name, pass)) { // Correct user-pass
       // Validate session and return OK 
       // Value stored in req.session allows us to identify the user in future requests
-      console.log("'" + name + "' has logged in");
       req.session.access_token = jwtToken(name);
-      console.log("'" + req.session.access_token + "' Token given ");
       res.redirect('dashboard'); 
   } else { // Wrong user-pass
       // Invalidate session and return index template
@@ -180,14 +178,21 @@ function logoutUser(req, res) {
 
 app.get('/dashboard', [getUser, userFound], dashboardController);
 
-function dashboardController(req, res) {
-   var payload = {
-      name: req.user.name, 
-      rooms: req.user.rooms
+function getDashBoardPayload(user) {
+   for(const key in user.rooms) {
+      if(rooms[key]) user.rooms[key].population = rooms[key].tokens_subscribed.length;
+   }
+   return {
+      name: user.name, 
+      rooms: user.rooms
    };
-   console.log(payload);
+}
+
+function dashboardController(req, res) {
+   const payload = getDashBoardPayload(req.user);   
    res.render('dashboard', payload); 
 }
+
 
 var rooms = {};
 app.post('/create-room', [getUser, userFound], createRoom);
@@ -205,7 +210,7 @@ function createRoom(req,  res) {
     OV.createSession(sessionProperties)
        .then(session => { 
            // rooms contain all running sessions 
-           const sessionId = session.getSessionId; 
+           const sessionId = session.getSessionId(); 
            rooms[sessionId] = {
               session: session,
               name: roomName,
@@ -214,7 +219,10 @@ function createRoom(req,  res) {
               tokens_subscribed: []
            }
            req.user.rooms[sessionId] = {
-              name: roomName
+              name: roomName,
+              self_made: true,
+              url: "/connect-room/" + sessionId,
+              population: 1
            }
            // Generate a new token asynchronously with the recently created tokenOptions
            session.generateToken(tokenOptions)
@@ -223,19 +231,23 @@ function createRoom(req,  res) {
                    rooms[sessionId].tokens_subscribed.push(token);
                    // add room to user object as created
                    req.user.rooms[sessionId].token = token; 
-                   res.session.msg = "New session created";
-                   res.redirect('dashboard');
+                   var payload = getDashBoardPayload(req.user); 
+                   payload.msg = "New session created";
+                   console.log(payload);
+                   res.render('dashboard', payload);
                })
                .catch(error => {
                    console.error(error);
-                   res.session.error = "error creating token for the session";
-                   res.redirect('dashboard');
+                   var payload = getDashBoardPayload(req.user); 
+                   payload.error = "error creating token for the session";
+                   res.render('dashboard', payload);
                });
        })
        .catch(error => {
            console.error(error);
-           res.session.error = "error creating session";
-           res.redirect('dashboard');
+           var payload = getDashBoardPayload(req.user); 
+           payload.error = "error creating new session";
+           res.render('dashboard', payload);
        });
 }
 
