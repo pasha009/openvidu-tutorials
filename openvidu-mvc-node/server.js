@@ -179,12 +179,24 @@ function logoutUser(req, res) {
 app.get('/dashboard', [getUser, userFound], dashboardController);
 
 function getDashBoardPayload(user) {
-   for(const key in user.rooms) {
-      if(rooms[key]) user.rooms[key].population = rooms[key].tokens_subscribed.length;
+   user_rooms = {}
+   for(const roomId in user.rooms) {
+      if(rooms[roomId]) {
+        real_room = rooms[roomId];
+        user_rooms[roomId] = {
+          population: real_room.tokens_subscribed.length, 
+          self_made: real_room.creator == user.name,
+          name: real_room.name,
+          token: token,
+          url: "#"          
+        };
+      } else {
+        delete user.rooms[roomId];
+      }
    }
    return {
       name: user.name, 
-      rooms: user.rooms
+      rooms: user_rooms
    };
 }
 
@@ -218,19 +230,13 @@ function createRoom(req,  res) {
               created_on: Date.now(),
               tokens_subscribed: []
            }
-           req.user.rooms[sessionId] = {
-              name: roomName,
-              self_made: true,
-              url: "/connect-room/" + sessionId,
-              population: 1
-           }
            // Generate a new token asynchronously with the recently created tokenOptions
            session.generateToken(tokenOptions)
                .then(token => {
                    // Store the new token in the collection of tokens
                    rooms[sessionId].tokens_subscribed.push(token);
                    // add room to user object as created
-                   req.user.rooms[sessionId].token = token; 
+                   req.user.rooms[sessionId] = { token: token };
                    var payload = getDashBoardPayload(req.user); 
                    payload.msg = "New session created";
                    console.log(payload);
@@ -251,32 +257,49 @@ function createRoom(req,  res) {
        });
 }
 
-//app.post("/close-room", jwtAuth, closeRoom);
+app.post("/close-room", [getUser, userFound], closeRoom);
 
 function closeRoom(req, res) {
   const reqRoomId = req.body.room_id;
-  if (rooms.reqRoomId && req.user.name == rooms.reqRoomId.creator) {
-    const session = rooms.reqRoomId.session;
+  if (!rooms[reqRoomId]) {
+    var payload = getDashBoardPayload(req.user); 
+    payload.error = "invalid room id";
+    res.render('dashboard', payload);
+  } else if(req.user.name != rooms[reqRoomId].creator) {
+    var payload = getDashBoardPayload(req.user); 
+    payload.error = "you are the room creator";
+    res.render('dashboard', payload);
+  } else {
+    const session = rooms[reqRoomId].session;
     session.close()
       .then(() => {
-         delete rooms.reqRoomId;
-         res.send("Room closed successfully");
+         delete rooms[reqRoomId];
+         var payload = getDashBoardPayload(req.user); 
+         payload.msg = "room closed";
+         res.render('dashboard', payload);
        })
       .catch(error => {
-         console.error(error);
-         res.status(400).send("Error closing room");
+         var payload = getDashBoardPayload(req.user); 
+         payload.error = "error closing room";
+         res.render('dashboard', payload);
       }); 
-  } else {
-     res.status(400).send("Invalid room_id or Forbidden");
-  }
+  } 
 }
 
 
-//app.post("/join-room", jwtAuth, joinRoom);
+app.post("/join-room", [getUser, userFound], joinRoom);
 
 function joinRoom(req, res) {
   const reqRoomId = req.body.room_id;
-  if (rooms.reqRoomId) {
+  if (!rooms[reqRoomId]) {
+    var payload = getDashBoardPayload(req.user); 
+    payload.error = "invalid room id";
+    res.render('dashboard', payload);
+  } else if(req.user.rooms[reqRoomId]) {
+    var payload = getDashBoardPayload(req.user); 
+    payload.error = "you are already in the room";
+    res.render('dashboard', payload);
+  } else {
     const session = rooms.reqRoomId.session;
     const tokenOptions = {
       role: req.user.role,
@@ -286,29 +309,34 @@ function joinRoom(req, res) {
         .then(token => {
             // Append the new token in the collection of tokens
             rooms[reqRoomId].tokens_subscribed.push(token);
-            // Send token as response
-            res.send({ 
-              token: token
-            });
+            req.user.rooms[sessionId] = { token: token };
+            var payload = getDashBoardPayload(req.user); 
+            payload.msg = "Room joined";
+            console.log(payload);
+            res.render('dashboard', payload);      
         })
         .catch(error => {
             console.error(error);
-            res.send({ 
-              error: "error creating token for the session", 
-              code: 5
-            });
+            var payload = getDashBoardPayload(req.user); 
+            payload.error = "error creating token for the session";
+            res.render('dashboard', payload);
         });
-
-  } else {
-     res.status(400).send("Invalid room_id");
-  }
+  } 
 }
 
-//app.post("/leave-room", jwtAuth, leaveRoom);
+app.post("/leave-room", [getUser, userFound], leaveRoom);
 
 function leaveRoom(req, res) {
   const reqRoomId = req.body.room_id;
-  if (rooms.reqRoomId) {
+  if (!rooms[reqRoomId]) {
+    var payload = getDashBoardPayload(req.user); 
+    payload.error = "invalid room id";
+    res.render('dashboard', payload);
+  } else if(!req.user.rooms[reqRoomId]) {
+    var payload = getDashBoardPayload(req.user); 
+    payload.error = "you are not in the room";
+    res.render('dashboard', payload);
+  } else {
     var tokens = rooms.reqRoomId.tokens_subscribed;
     const index = tokens.indexOf(req.user);
 
@@ -316,17 +344,17 @@ function leaveRoom(req, res) {
     if (index !== -1) {
       // Token removed
       tokens.splice(index, 1);
-    } else {
-      res.status(400).send("Invalid room_id");
-    }
+    } 
+    delete req.user.rooms[reqRoomId];
     if (tokens.length == 0) {
         // Last user left: session must be removed
         delete rooms.reqRoomId; 
     }
-    res.send("Room Left");
-  } else {
-     res.status(400).send("Invalid room_id");
-  }
+    var payload = getDashBoardPayload(req.user); 
+    payload.msg = "Room left successfully";
+    console.log(payload);
+    res.render('dashboard', payload);
+  } 
 }
 
 
