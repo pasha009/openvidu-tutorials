@@ -1,7 +1,9 @@
 /* CONFIGURATION */
 
-var OpenVidu = require('openvidu-node-client').OpenVidu;
-var OpenViduRole = require('openvidu-node-client').OpenViduRole;
+const OpenVidu = require('openvidu-node-client').OpenVidu;
+const OpenViduRole = require('openvidu-node-client').OpenViduRole;
+const RecordingMode = require('openvidu-node-client').RecordingMode;
+const Recording = require('openvidu-node-client').Recording;
 
 // Check launch arguments: must receive openvidu-server URL and the secret
 if (process.argv.length != 4) {
@@ -12,58 +14,98 @@ if (process.argv.length != 4) {
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
 
 // Node imports
-var express = require('express');
-var fs = require('fs');
-var session = require('express-session');
-var https = require('https');
-var bodyParser = require('body-parser'); // Pull information from HTML POST (express4)
-var app = express(); // Create our app with express
+const express = require('express');
+const fs = require('fs');
+const helmet = require('helmet');
+//var session = require('express-session');
+const https = require('https');
+const bodyParser = require('body-parser'); // Pull information from HTML POST (express4)
+const jwt = require('jwt-simple');
+const moment = require('moment'); // for date in jwt token
 
+const app = express(); // Create our app with express
+
+app.set('jwtTokenSecret', 'YOUR_SECRET_STRING');
+app.use(helmet());
 // Server configuration
-app.use(session({
-    saveUninitialized: true,
-    resave: false,
-    secret: 'MY_SECRET'
-}));
-app.use(express.static(__dirname + '/public')); // Set the static files location
+//app.use(session({
+ //   saveUninitialized: true,
+  //  resave: false,
+   // secret: 'MY_SECRET'
+//}));
+//app.use(express.static(__dirname + '/public')); // Set the static files location
 app.use(bodyParser.urlencoded({
-    'extended': 'true'
+   'extended': 'true'
 })); // Parse application/x-www-form-urlencoded
 app.use(bodyParser.json()); // Parse application/json
-app.use(bodyParser.json({
-    type: 'application/vnd.api+json'
-})); // Parse application/vnd.api+json as json
-app.set('view engine', 'ejs'); // Embedded JavaScript as template engine
+//app.use(bodyParser.json({
+ //   type: 'application/vnd.api+json'
+//})); // Parse application/vnd.api+json as json
+//app.set('view engine', 'ejs'); // Embedded JavaScript as template engine
 
 // Listen (start app with node server.js)
-var options = {
+const options = {
     key: fs.readFileSync('openvidukey.pem'),
     cert: fs.readFileSync('openviducert.pem')
 };
 https.createServer(options, app).listen(5000);
 
+
 // Mock database
-var users = [{
-    user: "publisher1",
-    pass: "pass",
-    role: OpenViduRole.PUBLISHER
-}, {
-    user: "publisher2",
-    pass: "pass",
-    role: OpenViduRole.PUBLISHER
-}, {
-    user: "subscriber",
-    pass: "pass",
-    role: OpenViduRole.SUBSCRIBER
-}];
+var users = new Map();
+function addUser(name, pass, role) { 
+   users.set(name, {
+      pass: pass,
+      role: role,
+      logged: false
+   });
+}
+addUser("p1", "p1pass", OpenViduRole.PUBLISHER);
+addUser("p3", "p3pass", OpenViduRole.PUBLISHER);
+addUser("s1", "s1pass", OpenViduRole.SUBSCRIBER);
+
+// jwt auth handler checks token and returns the user 
+function jwtauth(req, res, next) {
+  const token = (req.body && req.body.access_token) || (req.query && req.query.access_token) || req.headers['x-access-token'];
+//  console.log(res.body);
+  if (token) {
+  try {
+      const decoded = jwt.decode(token, app.get('jwtTokenSecret'));
+      if (decoded.exp <= Date.now()) {
+        res.status(400).send('Access token has expired');
+      } else if (!users.has(decoded.name) || !users.get(decoded.name).logged) {
+        res.status(400).send('You are not logged in');
+      } else {
+        req.user = users.get(decoded.name);
+        next();
+      }
+    } catch (err) {
+      console.log("error while parsing a token");
+      res.status(400).send("Bad Token");
+    }
+  } else {
+      res.status(400).send("Forbidden. No access token found");
+  } 
+}
+
+// jwt token generator
+function jwttoken(name) {
+  const expires = moment().add(7, 'days').valueOf();
+  const token = jwt.encode({
+    name: name,  
+    exp: expires
+  }, app.get('jwtTokenSecret'));
+  users.get(name).logged = true;
+  return token;
+}
 
 // Environment variable: URL where our OpenVidu server is listening
-var OPENVIDU_URL = process.argv[2];
+const OPENVIDU_URL = process.argv[2];
 // Environment variable: secret shared with our OpenVidu server
-var OPENVIDU_SECRET = process.argv[3];
+const OPENVIDU_SECRET = process.argv[3];
 
 // Entrypoint to OpenVidu Node Client SDK
-var OV = new OpenVidu(OPENVIDU_URL, OPENVIDU_SECRET);
+const OV = new OpenVidu(OPENVIDU_URL, OPENVIDU_SECRET);
 
 // Collection to pair session names with OpenVidu Session objects
 var mapSessions = {};
@@ -78,188 +120,177 @@ console.log("App listening on port 5000");
 
 /* REST API */
 
-app.post('/', loginController);
-app.get('/', loginController);
+app.post('/login', loginUser);
+// app.get('/', loginController);
 
-function loginController(req, res) {
-    if (req.session.loggedUser) { // User is logged
-        user = req.session.loggedUser;
-        res.redirect('/dashboard');
-    } else { // User is not logged
-        req.session.destroy();
-        res.render('index.ejs');
+function loginUser(req, res) {
+  // Retrieve params from POST body
+  const name = req.body.name;
+  const pass = req.body.pass;
+  console.log("Logging in | {user, pass}={" + name + ", " + pass + "}");
+  if (login(name, pass)){ // Correct user-pass
+      // Validate session and return OK 
+      // Value stored in req.session allows us to identify the user in future requests
+      console.log("'" + name + "' has logged in");
+      res.send({
+         token: jwttoken(name),
+      });
+ } else { // Wrong user-pass
+      // Invalidate session and return index template
+      console.log("'" + name + "' invalid credentials");
+      res.status(400).send({
+         error: "invalid credentials",
+         code: 2
+      });
+  }
+}
+
+app.post('/logout', jwtauth, logoutUser);
+
+function logoutUser(req, res) {
+    if(req.user) {
+      req.user.logged = false;
+      res.send('you are logged out now');
+    } else {
+      res.status(400).send('You are already not logged in');
     }
 }
 
-app.post('/logout', (req, res) => {
-    req.session.destroy();
-    res.redirect('/');
-});
+var rooms = {};
+app.post('/create-room', createRoom);
 
-app.post('/dashboard', dashboardController);
-app.get('/dashboard', dashboardController);
+function createRoom(req, res) {
+  req.user = users.get("p1");
+  if(req.user) {
+    const tokenOptions = {
+      role: req.user.role,
+      data: JSON.stringify({ serverData: req.user })
+    }
+    const roomName = req.body.room_name || "Default Room Name";
+    const sessionProperties = {
+      recordingMode: RecordingMode.ALWAYS,
+      defaultOutputMode: Recording.OutputMode.INDIVIDUAL
+    } 
+    OV.createSession(sessionProperties)
+       .then(session => { 
+           // rooms contain all running sessions 
+           const sessionId = session.getSessionId; 
+           rooms[sessionId] = {
+              session: session,
+              name: roomName,
+              creator: req.user.name,
+              created_on: Date.now(),
+              tokens_subscribed: []
+           }
 
-function dashboardController(req, res) {
+           // Generate a new token asynchronously with the recently created tokenOptions
+           session.generateToken(tokenOptions)
+               .then(token => {
+                   // Store the new token in the collection of tokens
+                   rooms[sessionId].tokens_subscribed.push(token);
+                   // Send token and sessionId as response
+                   res.send({ 
+                     token: token,
+                     room_id: sessionId
+                   });
+               })
+               .catch(error => {
+                   console.error(error);
+                   res.send({ 
+                     error: "error creating token for the session", 
+                     session_id: sessionId,
+                     code: 3
+                   });
+               });
+       })
+       .catch(error => {
+           console.error(error);
+           res.send({ 
+             error: "error creating session",
+             code: 4
+           });
+       });
+  }
+}
 
-    // Check if the user is already logged in
-    if (isLogged(req.session)) {
-        // User is already logged. Immediately return dashboard
-        user = req.session.loggedUser;
-        res.render('dashboard.ejs', {
-            user: user
-        });
-    } else {
-        // User wasn't logged and wants to
+app.post("/close-room", jwtAuth, closeRoom);
 
-        // Retrieve params from POST body
-        var user = req.body.user;
-        var pass = req.body.pass;
-        console.log("Logging in | {user, pass}={" + user + ", " + pass + "}");
+function closeRoom(req, res) {
+  const reqRoomId = req.body.room_id;
+  if (rooms.reqRoomId && req.user.name == rooms.reqRoomId.creator) {
+    const session = rooms.reqRoomId.session;
+    session.close()
+      .then(() => {
+         delete rooms.reqRoomId;
+         res.send("Room closed successfully");
+       })
+      .catch(error => {
+         console.error(error);
+         res.status(400).send("Error closing room");
+      }); 
+  } else {
+     res.status(400).send("Invalid room_id or Forbidden");
+  }
+}
 
-        if (login(user, pass)) { // Correct user-pass
-            // Validate session and return OK 
-            // Value stored in req.session allows us to identify the user in future requests
-            console.log("'" + user + "' has logged in");
-            req.session.loggedUser = user;
-            res.render('dashboard.ejs', {
-                user: user
+
+app.post("/join-room", jwtAuth, joinRoom);
+
+function joinRoom(req, res) {
+  const reqRoomId = req.body.room_id;
+  if (rooms.reqRoomId) {
+    const session = rooms.reqRoomId.session;
+    const tokenOptions = {
+      role: req.user.role,
+      data: JSON.stringify({ serverData: req.user })
+    }
+    session.generateToken(tokenOptions)
+        .then(token => {
+            // Append the new token in the collection of tokens
+            rooms[reqRoomId].tokens_subscribed.push(token);
+            // Send token as response
+            res.send({ 
+              token: token
             });
-        } else { // Wrong user-pass
-            // Invalidate session and return index template
-            console.log("'" + user + "' invalid credentials");
-            req.session.destroy();
-            res.redirect('/');
-        }
-    }
+        })
+        .catch(error => {
+            console.error(error);
+            res.send({ 
+              error: "error creating token for the session", 
+              code: 5
+            });
+        });
+
+  } else {
+     res.status(400).send("Invalid room_id");
+  }
 }
 
-app.post('/session', (req, res) => {
-    if (!isLogged(req.session)) {
-        req.session.destroy();
-        res.redirect('/');
+app.post("/leave-room", jwtAuth, leaveRoom);
+
+function leaveRoom(req, res) {
+  const reqRoomId = req.body.room_id;
+  if (rooms.reqRoomId) {
+    var tokens = rooms.reqRoomId.tokens_subscribed;
+    const index = tokens.indexOf(req.user);
+
+    // If the token exists
+    if (index !== -1) {
+      // Token removed
+      tokens.splice(index, 1);
     } else {
-        // The nickname sent by the client
-        var clientData = req.body.data;
-        // The video-call to connect
-        var sessionName = req.body.sessionname;
-
-        // Role associated to this user
-        var role = users.find(u => (u.user === req.session.loggedUser)).role;
-
-        // Optional data to be passed to other users when this user connects to the video-call
-        // In this case, a JSON with the value we stored in the req.session object on login
-        var serverData = JSON.stringify({ serverData: req.session.loggedUser });
-
-        console.log("Getting a token | {sessionName}={" + sessionName + "}");
-
-        // Build tokenOptions object with the serverData and the role
-        var tokenOptions = {
-            data: serverData,
-            role: role
-        };
-
-        if (mapSessions[sessionName]) {
-            // Session already exists
-            console.log('Existing session ' + sessionName);
-
-            // Get the existing Session from the collection
-            var mySession = mapSessions[sessionName];
-
-            // Generate a new token asynchronously with the recently created tokenOptions
-            mySession.generateToken(tokenOptions)
-                .then(token => {
-
-                    // Store the new token in the collection of tokens
-                    mapSessionNamesTokens[sessionName].push(token);
-
-                    // Return session template with all the needed attributes
-                    res.render('session.ejs', {
-                        sessionId: mySession.getSessionId(),
-                        token: token,
-                        nickName: clientData,
-                        userName: req.session.loggedUser,
-                        sessionName: sessionName
-                    });
-                })
-                .catch(error => {
-                    console.error(error);
-                });
-        } else {
-            // New session
-            console.log('New session ' + sessionName);
-
-            // Create a new OpenVidu Session asynchronously
-            OV.createSession()
-                .then(session => {
-                    // Store the new Session in the collection of Sessions
-                    mapSessions[sessionName] = session;
-                    // Store a new empty array in the collection of tokens
-                    mapSessionNamesTokens[sessionName] = [];
-
-                    // Generate a new token asynchronously with the recently created tokenOptions
-                    session.generateToken(tokenOptions)
-                        .then(token => {
-
-                            // Store the new token in the collection of tokens
-                            mapSessionNamesTokens[sessionName].push(token);
-
-                            // Return session template with all the needed attributes
-                            res.render('session.ejs', {
-                                sessionName: sessionName,
-                                token: token,
-                                nickName: clientData,
-                                userName: req.session.loggedUser,
-                            });
-                        })
-                        .catch(error => {
-                            console.error(error);
-                        });
-                })
-                .catch(error => {
-                    console.error(error);
-                });
-        }
+      res.status(400).send("Invalid room_id");
     }
-});
-
-app.post('/leave-session', (req, res) => {
-    if (!isLogged(req.session)) {
-        req.session.destroy();
-        res.render('index.ejs');
-    } else {
-        // Retrieve params from POST body
-        var sessionName = req.body.sessionname;
-        var token = req.body.token;
-        console.log('Removing user | {sessionName, token}={' + sessionName + ', ' + token + '}');
-
-        // If the session exists
-        if (mapSessions[sessionName] && mapSessionNamesTokens[sessionName]) {
-            var tokens = mapSessionNamesTokens[sessionName];
-            var index = tokens.indexOf(token);
-
-            // If the token exists
-            if (index !== -1) {
-                // Token removed
-                tokens.splice(index, 1);
-                console.log(sessionName + ': ' + tokens.toString());
-            } else {
-                var msg = 'Problems in the app server: the TOKEN wasn\'t valid';
-                console.log(msg);
-                res.redirect('/dashboard');
-            }
-            if (tokens.length == 0) {
-                // Last user left: session must be removed
-                console.log(sessionName + ' empty!');
-                delete mapSessions[sessionName];
-            }
-            res.redirect('/dashboard');
-        } else {
-            var msg = 'Problems in the app server: the SESSION does not exist';
-            console.log(msg);
-            res.status(500).send(msg);
-        }
+    if (tokens.length == 0) {
+        // Last user left: session must be removed
+        delete rooms.reqRoomId; 
     }
-});
+    res.send("Room Left");
+  } else {
+     res.status(400).send("Invalid room_id");
+  }
+}
+
 
 /* REST API */
 
@@ -267,14 +298,9 @@ app.post('/leave-session', (req, res) => {
 
 /* AUXILIARY METHODS */
 
-function login(user, pass) {
-    return (user != null &&
-        pass != null &&
-        users.find(u => (u.user === user) && (u.pass === pass)));
-}
-
-function isLogged(session) {
-    return (session.loggedUser != null);
+function login(name, pass) {
+    return (name && pass && users.has(name) &&
+        users.get(name).pass == pass);
 }
 
 function getBasicAuth() {
