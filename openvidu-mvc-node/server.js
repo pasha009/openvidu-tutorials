@@ -17,7 +17,7 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
 const express = require('express');
 const fs = require('fs');
 const helmet = require('helmet');
-//var session = require('express-session');
+const session = require('express-session');
 const https = require('https');
 const bodyParser = require('body-parser'); // Pull information from HTML POST (express4)
 const jwt = require('jwt-simple');
@@ -28,12 +28,12 @@ const app = express(); // Create our app with express
 app.set('jwtTokenSecret', 'YOUR_SECRET_STRING');
 app.use(helmet());
 // Server configuration
-//app.use(session({
- //   saveUninitialized: true,
-  //  resave: false,
-   // secret: 'MY_SECRET'
-//}));
-//app.use(express.static(__dirname + '/public')); // Set the static files location
+app.use(session({
+   saveUninitialized: true,
+   resave: false,
+   secret: 'MY_SECRET'
+}));
+app.use(express.static(__dirname + '/public')); // Set the static files location
 app.use(bodyParser.urlencoded({
    'extended': 'true'
 })); // Parse application/x-www-form-urlencoded
@@ -41,7 +41,7 @@ app.use(bodyParser.json()); // Parse application/json
 //app.use(bodyParser.json({
  //   type: 'application/vnd.api+json'
 //})); // Parse application/vnd.api+json as json
-//app.set('view engine', 'ejs'); // Embedded JavaScript as template engine
+app.set('view engine', 'ejs'); // Embedded JavaScript as template engine
 
 // Listen (start app with node server.js)
 const options = {
@@ -55,9 +55,11 @@ https.createServer(options, app).listen(5000);
 var users = new Map();
 function addUser(name, pass, role) { 
    users.set(name, {
+      name: name,
       pass: pass,
       role: role,
-      logged: false
+      logged: false,
+      rooms: []
    });
 }
 addUser("p1", "p1pass", OpenViduRole.PUBLISHER);
@@ -65,31 +67,54 @@ addUser("p3", "p3pass", OpenViduRole.PUBLISHER);
 addUser("s1", "s1pass", OpenViduRole.SUBSCRIBER);
 
 // jwt auth handler checks token and returns the user 
-function jwtauth(req, res, next) {
-  const token = (req.body && req.body.access_token) || (req.query && req.query.access_token) || req.headers['x-access-token'];
-//  console.log(res.body);
+function getUser(req, res, next) {
+  const token = req.session.access_token || (req.body && req.body.access_token) || (req.query && req.query.access_token) || req.headers['x-access-token'];
+  console.log(token);
   if (token) {
-  try {
+    try {
       const decoded = jwt.decode(token, app.get('jwtTokenSecret'));
       if (decoded.exp <= Date.now()) {
-        res.status(400).send('Access token has expired');
+        req.session.destroy();
+        res.render('login', {
+           error: 'Access token has expired',
+        });
       } else if (!users.has(decoded.name) || !users.get(decoded.name).logged) {
-        res.status(400).send('You are not logged in');
+        req.session.destroy();
+        res.render('login', {
+           error: 'You are not logged in',
+        });
       } else {
         req.user = users.get(decoded.name);
+        req.session.access_token = token;
         next();
       }
     } catch (err) {
-      console.log("error while parsing a token");
-      res.status(400).send("Bad Token");
+      console.log(err);
+      req.session.destroy();
+      res.render('login', {
+           error: 'Bad Token',
+      });
     }
   } else {
-      res.status(400).send("Forbidden. No access token found");
-  } 
+    next();
+  }
 }
 
+// middle to ensure the user is identified
+function userFound(req, res, next) {
+  if(req.user) {
+    next();
+  } else {
+    req.session.destroy();
+    res.render('login', {
+       error: 'You must login first',
+    });
+  }
+}
+
+
 // jwt token generator
-function jwttoken(name) {
+function jwtToken(name) {
   const expires = moment().add(7, 'days').valueOf();
   const token = jwt.encode({
     name: name,  
@@ -106,62 +131,68 @@ const OPENVIDU_SECRET = process.argv[3];
 
 // Entrypoint to OpenVidu Node Client SDK
 const OV = new OpenVidu(OPENVIDU_URL, OPENVIDU_SECRET);
-
-// Collection to pair session names with OpenVidu Session objects
-var mapSessions = {};
-// Collection to pair session names with tokens
-var mapSessionNamesTokens = {};
-
 console.log("App listening on port 5000");
+
 
 /* CONFIGURATION */
 
 
 
 /* REST API */
-
+app.get('/login', getUser, getLoginScreen);
 app.post('/login', loginUser);
-// app.get('/', loginController);
+
+// [getUser, userFound],
+
+function getLoginScreen(req, res) {
+  if(req.user) res.redirect('dashboard');
+  else res.render('login');
+}
 
 function loginUser(req, res) {
   // Retrieve params from POST body
   const name = req.body.name;
   const pass = req.body.pass;
   console.log("Logging in | {user, pass}={" + name + ", " + pass + "}");
-  if (login(name, pass)){ // Correct user-pass
+  if (login(name, pass)) { // Correct user-pass
       // Validate session and return OK 
       // Value stored in req.session allows us to identify the user in future requests
       console.log("'" + name + "' has logged in");
-      res.send({
-         token: jwttoken(name),
-      });
- } else { // Wrong user-pass
+      req.session.access_token = jwtToken(name);
+      console.log("'" + req.session.access_token + "' Token given ");
+      res.redirect('dashboard'); 
+  } else { // Wrong user-pass
       // Invalidate session and return index template
-      console.log("'" + name + "' invalid credentials");
-      res.status(400).send({
-         error: "invalid credentials",
-         code: 2
+      if(res.session) res.session.destroy();
+      res.render('login', {
+         error: 'Invalid Credentials',
       });
   }
 }
 
-app.post('/logout', jwtauth, logoutUser);
+app.post('/logout', [getUser, userFound], logoutUser);
 
 function logoutUser(req, res) {
-    if(req.user) {
-      req.user.logged = false;
-      res.send('you are logged out now');
-    } else {
-      res.status(400).send('You are already not logged in');
-    }
+   req.user.logged = false;
+   req.session.destroy();
+   res.redirect('login');
+}
+
+app.get('/dashboard', [getUser, userFound], dashboardController);
+
+function dashboardController(req, res) {
+   var payload = {
+      name: req.user.name, 
+      rooms: req.user.rooms
+   };
+   console.log(payload);
+   res.render('dashboard', payload); 
 }
 
 var rooms = {};
-app.post('/create-room', createRoom);
+app.post('/create-room', [getUser, userFound], createRoom);
 
-function createRoom(req, res) {
-  req.user = users.get("p1");
-  if(req.user) {
+function createRoom(req,  res) {
     const tokenOptions = {
       role: req.user.role,
       data: JSON.stringify({ serverData: req.user })
@@ -182,38 +213,33 @@ function createRoom(req, res) {
               created_on: Date.now(),
               tokens_subscribed: []
            }
-
+           req.user.rooms[sessionId] = {
+              name: roomName
+           }
            // Generate a new token asynchronously with the recently created tokenOptions
            session.generateToken(tokenOptions)
                .then(token => {
                    // Store the new token in the collection of tokens
                    rooms[sessionId].tokens_subscribed.push(token);
-                   // Send token and sessionId as response
-                   res.send({ 
-                     token: token,
-                     room_id: sessionId
-                   });
+                   // add room to user object as created
+                   req.user.rooms[sessionId].token = token; 
+                   res.session.msg = "New session created";
+                   res.redirect('dashboard');
                })
                .catch(error => {
                    console.error(error);
-                   res.send({ 
-                     error: "error creating token for the session", 
-                     session_id: sessionId,
-                     code: 3
-                   });
+                   res.session.error = "error creating token for the session";
+                   res.redirect('dashboard');
                });
        })
        .catch(error => {
            console.error(error);
-           res.send({ 
-             error: "error creating session",
-             code: 4
-           });
+           res.session.error = "error creating session";
+           res.redirect('dashboard');
        });
-  }
 }
 
-app.post("/close-room", jwtAuth, closeRoom);
+//app.post("/close-room", jwtAuth, closeRoom);
 
 function closeRoom(req, res) {
   const reqRoomId = req.body.room_id;
@@ -234,7 +260,7 @@ function closeRoom(req, res) {
 }
 
 
-app.post("/join-room", jwtAuth, joinRoom);
+//app.post("/join-room", jwtAuth, joinRoom);
 
 function joinRoom(req, res) {
   const reqRoomId = req.body.room_id;
@@ -266,7 +292,7 @@ function joinRoom(req, res) {
   }
 }
 
-app.post("/leave-room", jwtAuth, leaveRoom);
+//app.post("/leave-room", jwtAuth, leaveRoom);
 
 function leaveRoom(req, res) {
   const reqRoomId = req.body.room_id;
