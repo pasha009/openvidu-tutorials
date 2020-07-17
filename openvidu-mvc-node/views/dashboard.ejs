@@ -22,6 +22,16 @@
 <body>
 
 	<div id="main-container" class="container">
+                <% if (locals.error) { %>
+                   <div class="alert alert-danger" role="alert">
+                       <%= locals.error %>
+                   </div>
+                <% } %>
+                <% if (locals.msg) { %>
+                   <div class="alert alert-success" role="alert">
+                       <%= locals.msg %>
+                   </div>
+                <% } %>
 		<div id="logged">
 			<div id="join" class="vertical-center">
 				<div id="join-dialog" class="jumbotron">
@@ -43,7 +53,7 @@
 						</div>
 					</form>
                                         <h3>Join a video session</h3>
-					<form class="form-group" action="/create-room" method="post">
+					<form class="form-group" action="/join-room" method="post">
 						<div class="input-group">
 							<input class="form-control" placeholder="Room ID" type="text" name="room_id" required="true">
 					            <span class="input-group-btn">	
@@ -52,18 +62,56 @@
 						</div>
 					</form>
 					<hr/>
+                    <!-- Modal -->
+<div class="modal fade" id="roomInfoModal" tabindex="-1" role="dialog" aria-labelledby="roomInfoModalCenterTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+          <h3 style="float: left;" class="modal-title" id="roomInfoModalLongTitle">Modal title</h3>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="roomInfoRoomID">Room ID: Default</p>
+        <p id="roomInfoCreator">Creator: Default</p>
+        <p id="roomInfoPopulation">Population: Default</p>
+      </div>
+      <div class="modal-footer">
+        <span class="form-control-static pull-left"> 
+          <form method="post" action="/close-room">
+            <input type="hidden" name="room_id" class="room_id_hidden" value="0">
+            <button id="closeRoomButton" type="submit" class="btn btn-danger">Close Room</button>
+          </form>
+        </span>
+        <span class="form-control-static pull-right"> 
+          <form method="post" action="/connect-room">
+            <input type="hidden" name="room_id" class="room_id_hidden" value="0">
+            <button style="margin-right: 15px;" type="submit" id="joinRoomButton" type="button" class="btn btn-success">Connect </button>
+          </form>
+        </span>
+        <span class="form-control-static pull-right"> 
+          <form method="post" action="/leave-room">
+            <input type="hidden" name="room_id"  class="room_id_hidden" value="0">
+            <button style="margin-right: 15px;" type="submit" id="leaveRoomButton" type="button" class="btn btn-danger">Leave Room</button>
+          </form>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
                                         <h3> Rooms connected </h3>
                                         <div class="list-group">
                                           <% for (key in locals.rooms) { %>
                                             <% const room = locals.rooms[key]; %>
                                             <% if (room.self_made) { %>
-                                              <a href="<%= room.url %>" class="list-group-item list-group-item-action
+                                              <a onclick="modalhandler('<%= key %>')" class="list-group-item list-group-item-action
                                                      list-group-item-primary d-flex justify-content-between align-items-center">
                                                <%= room.name %>
                                                <span class="badge badge-primary badge-pill"><%= room.population %></span>
                                               </a>
                                             <% } else { %>
-                                              <a href="<%= room.url %>" class="list-group-item list-group-item-action
+                                              <a onclick="modalhandler('<%= key %>')" class="list-group-item list-group-item-action
                                                      list-group-item-warn d-flex justify-content-between align-items-center">
                                                <%= room.name %>
                                                <span class="badge badge-primary badge-pill"><%= room.population %></span>
@@ -75,6 +123,32 @@
 			</div>
 		</div>
 	</div>
+
+
+
+<script>
+
+rooms = <%-JSON.stringify(locals.rooms)%>;
+ 
+function modalhandler(key) {
+  console.log(rooms[key]);
+  if(rooms[key].self_made) {
+      $("#closeRoomButton").show();
+  } else {
+      $("#closeRoomButton").hide();
+  }
+  $("#roomInfoModalLongTitle").text(rooms[key].name);
+  $("#roomInfoPopulation").text("Population: " + rooms[key].population);
+  $("#roomInfoRoomID").text("Room ID: " + key);
+  $("#roomInfoCreator").text("Creator: " + rooms[key].creator);
+  $(".room_id_hidden").each(function(index, value) {
+      this.value = key;
+  });
+  $("#roomInfoModal").modal('show');
+}
+</script>
+
+
 
 </body>
 

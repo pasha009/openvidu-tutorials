@@ -187,7 +187,8 @@ function getDashBoardPayload(user) {
           population: real_room.tokens_subscribed.length, 
           self_made: real_room.creator == user.name,
           name: real_room.name,
-          token: token,
+          token: user.rooms[roomId].token,
+	  creator: real_room.creator,
           url: "#"          
         };
       } else {
@@ -300,7 +301,7 @@ function joinRoom(req, res) {
     payload.error = "you are already in the room";
     res.render('dashboard', payload);
   } else {
-    const session = rooms.reqRoomId.session;
+    const session = rooms[reqRoomId].session;
     const tokenOptions = {
       role: req.user.role,
       data: JSON.stringify({ serverData: req.user })
@@ -309,7 +310,7 @@ function joinRoom(req, res) {
         .then(token => {
             // Append the new token in the collection of tokens
             rooms[reqRoomId].tokens_subscribed.push(token);
-            req.user.rooms[sessionId] = { token: token };
+            req.user.rooms[reqRoomId] = { token: token };
             var payload = getDashBoardPayload(req.user); 
             payload.msg = "Room joined";
             console.log(payload);
@@ -337,7 +338,7 @@ function leaveRoom(req, res) {
     payload.error = "you are not in the room";
     res.render('dashboard', payload);
   } else {
-    var tokens = rooms.reqRoomId.tokens_subscribed;
+    var tokens = rooms[reqRoomId].tokens_subscribed;
     const index = tokens.indexOf(req.user);
 
     // If the token exists
@@ -355,6 +356,29 @@ function leaveRoom(req, res) {
     console.log(payload);
     res.render('dashboard', payload);
   } 
+}
+
+app.post("/connect-room", [getUser, userFound], connectRoom);
+
+function connectRoom(req, res) {
+   reqRoomId = req.body.room_id;
+   if (!rooms[reqRoomId]) {
+     var payload = getDashBoardPayload(req.user); 
+     payload.error = "invalid room id";
+     res.render('dashboard', payload);
+   } else if(!req.user.rooms[reqRoomId]) {
+     var payload = getDashBoardPayload(req.user); 
+     payload.error = "you are not in the room";
+     res.render('dashboard', payload);
+   } else {
+     var payload = {
+	room_id: reqRoomId,
+	token: req.user.rooms[reqRoomId].token,
+	name: req.user.name,
+        room_name: rooms[reqRoomId].name
+     };
+     res.render('session', payload);
+   }
 }
 
 

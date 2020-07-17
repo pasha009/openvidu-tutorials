@@ -19,36 +19,28 @@
 
 <body>
 
-	<nav class="navbar navbar-default">
-		<div class="container">
-			<div class="navbar-header">
-				<a class="navbar-brand" href="/">
-					<img class="demo-logo" src="images/openvidu_vert_white_bg_trans_cropped.png" /> MVC Node</a>
-				<a class="navbar-brand nav-icon" href="https://github.com/OpenVidu/openvidu-tutorials/tree/master/openvidu-mvc-node" title="GitHub Repository"
-				 target="_blank">
-					<i class="fa fa-github" aria-hidden="true"></i>
-				</a>
-				<a class="navbar-brand nav-icon" href="http://www.docs.openvidu.io/en/stable/tutorials/openvidu-mvc-node/" title="Documentation" target="_blank">
-					<i class="fa fa-book" aria-hidden="true"></i>
-				</a>
-			</div>
-		</div>
-	</nav>
-
 	<div id="main-container" class="container">
+		<% if (locals.error) { %>
+                   <div class="alert alert-danger" role="alert">
+                       <%= locals.error %>
+                   </div>
+                <% } %>
+                <% if (locals.msg) { %>
+                   <div class="alert alert-success" role="alert">
+                       <%= locals.msg %>
+                   </div>
+                <% } %>
 		<div id="logged">
 			<div id="session">
 				<div id="session-header">
-					<h1 id="session-title"><%= sessionName %></h1>
-					<form action="/leave-session" method="post">
-						<input type="hidden" name="sessionname" value="<%= sessionName %>"></input>
-						<input type="hidden" name="token" value="<%= token %>"></input>
-						<button id="buttonLeaveSession" class="btn btn-large btn-danger" type="submit" onclick="leaveSession()">
+					<h1 id="session-title"><%= room_name %></h1>
+					<form action="/leave-room" method="post">
+						<input type="hidden" name="room_id" value="<%= room_id %>"></input>
+						<button id="buttonLeaveSession" class="btn btn-danger" type="submit" onclick="leaveSession()">
 							Leave session</button>
 					</form>
 				</div>
 				<div id="main-video" class="col-md-6">
-					<p class="nickName"></p>
 					<p class="userName"></p>
 					<video autoplay="true" playsinline="true"></video>
 				</div>
@@ -56,24 +48,14 @@
 			</div>
 		</div>
 	</div>
-
-	<footer class="footer">
-		<div class="container">
-			<div class="text-muted">OpenVidu © 2017</div>
-			<a href="http://www.openvidu.io/" target="_blank">
-				<img class="openvidu-logo" src="images/openvidu_globe_bg_transp_cropped.png" />
-			</a>
-		</div>
-	</footer>
-
 </body>
 
 <script>
 	// Get all the attributes from the template in EJS style
-	var sessionName = <%- JSON.stringify(sessionName) %>;
+	var sessionName = <%- JSON.stringify(room_name) %>;
+	var sessionID = <%- JSON.stringify(room_id) %>;
 	var token = <%- JSON.stringify(token) %>;
-	var nickName = <%- JSON.stringify(nickName) %>;
-	var userName = <%- JSON.stringify(userName) %>;
+	var userName = <%- JSON.stringify(name) %>;
 
 	console.warn('Request of TOKEN gone WELL (TOKEN:' + token + ')');
 
@@ -111,13 +93,12 @@
 	// --- 4) Connect to the session passing the retrieved token and some more data from
 	//        the client (in this case a JSON with the nickname chosen by the user) ---
 
-	session.connect(token, { clientData: nickName })
+	session.connect(token, { clientData: userName })
 		.then(() => {
 
 			// --- 5) Set page layout for active call ---
 
 			$('#session-title').text(sessionName);
-			$('#join').hide();
 			$('#session').show();
 
 
@@ -125,7 +106,6 @@
 			// trying to publish its stream. Even if someone modified the client's code and
 			// published the stream, it wouldn't work if the token sent in Session.connect
 			// method is not recognized as 'PUBLIHSER' role by OpenVidu Server
-			if (isPublisher()) {
 
 				// --- 6) Get your own camera stream ---
 
@@ -146,7 +126,6 @@
 				publisher.on('videoElementCreated', (event) => {
 					// Init the main video with ours and append our data
 					var userData = {
-						nickName: nickName,
 						userName: userName
 					};
 					initMainVideo(event.element, userData);
@@ -159,10 +138,6 @@
 
 				session.publish(publisher);
 
-			} else {
-				console.warn('You don\'t have permissions to publish');
-				initMainVideoThumbnail(); // Show SUBSCRIBER message in main video
-			}
 		})
 		.catch(error => {
 			console.warn('There was an error connecting to the session:', error.code, error.message);
@@ -176,24 +151,15 @@
 	}
 
 	function appendUserData(videoElement, connection) {
-		var clientData;
-		var serverData;
-		var nodeId;
-		if (connection.nickName) { // Appending local video data
-			clientData = connection.nickName;
-			serverData = connection.userName;
-			nodeId = 'main-videodata';
-		} else {
-			clientData = JSON.parse(connection.data.split('%/%')[0]).clientData;
-			serverData = JSON.parse(connection.data.split('%/%')[1]).serverData;
-			nodeId = connection.connectionId;
-		}
+	        var serverData = connection.clientData;
+		console.log(connection);
+	        var nodeId = 'main-videodata';
 		var dataNode = document.createElement('div');
 		dataNode.className = "data-node";
 		dataNode.id = "data-" + nodeId;
-		dataNode.innerHTML = '<p class="nickName">' + clientData + '</p><p class="userName">' + serverData + '</p>';
+		dataNode.innerHTML = '<p class="userName">' + serverData + '</p>';
 		videoElement.parentNode.insertBefore(dataNode, videoElement.nextSibling);
-		addClickListener(videoElement, clientData, serverData);
+		addClickListener(videoElement, serverData);
 	}
 
 	function removeUserData(connection) {
@@ -215,12 +181,11 @@
 		});
 	}
 
-	function addClickListener(videoElement, clientData, serverData) {
+	function addClickListener(videoElement, serverData) {
 		videoElement.addEventListener('click', function () {
 			var mainVideo = $('#main-video video').get(0);
 			if (mainVideo.srcObject !== videoElement.srcObject) {
 				$('#main-video').fadeOut("fast", () => {
-					$('#main-video p.nickName').html(clientData);
 					$('#main-video p.userName').html(serverData);
 					mainVideo.srcObject = videoElement.srcObject;
 					$('#main-video').fadeIn("fast");
@@ -231,18 +196,10 @@
 
 	function initMainVideo(videoElement, userData) {
 		$('#main-video video').get(0).srcObject = videoElement.srcObject;
-		$('#main-video p.nickName').html(userData.nickName);
 		$('#main-video p.userName').html(userData.userName);
 		$('#main-video video').prop('muted', true);
 	}
 
-	function initMainVideoThumbnail() {
-		$('#main-video video').css("background", "url('images/subscriber-msg.jpg') round");
-	}
-
-	function isPublisher() {
-		return userName.includes('publisher');
-	}
 </script>
 
 </html>
