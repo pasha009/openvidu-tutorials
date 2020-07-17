@@ -64,7 +64,7 @@ function addUser(name, pass, role) {
 }
 addUser("p1", "p1pass", OpenViduRole.PUBLISHER);
 addUser("p3", "p3pass", OpenViduRole.PUBLISHER);
-addUser("s1", "s1pass", OpenViduRole.SUBSCRIBER);
+addUser("s1", "s1pass", OpenViduRole.PUBLISHER);
 
 // jwt auth handler checks token and returns the user 
 function getUser(req, res, next) {
@@ -213,7 +213,7 @@ app.post('/create-room', [getUser, userFound], createRoom);
 function createRoom(req,  res) {
     const tokenOptions = {
       role: req.user.role,
-      data: JSON.stringify({ serverData: req.user })
+      data: JSON.stringify({ serverData: req.user.name })
     }
     const roomName = req.body.room_name || "Default Room Name";
     const sessionProperties = {
@@ -304,7 +304,7 @@ function joinRoom(req, res) {
     const session = rooms[reqRoomId].session;
     const tokenOptions = {
       role: req.user.role,
-      data: JSON.stringify({ serverData: req.user })
+      data: JSON.stringify({ serverData: req.user.name })
     }
     session.generateToken(tokenOptions)
         .then(token => {
